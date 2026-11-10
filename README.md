@@ -201,3 +201,10 @@ More in [`NOTES.md`](NOTES.md).
 ## Credits
 
 Built on Apple's open-source releases (xnu, IOHIDFamily, libpthread, hfs), [BearSSL](https://bearssl.org), [blacktop/darwin-xnu-build](https://github.com/blacktop/darwin-xnu-build), [ipsw](https://github.com/blacktop/ipsw), Qualcomm/Xiaomi's published Linux kernel sources for the hardware details, and [OrangeFox Recovery](https://orangefox.download). iOS itself is Apple's and is not distributed here.
+## Pixel 4a (sunfish) bring-up
+
+`SUNFISH` is a separate XNU machine target for the Pixel 4a. The initial
+profile runs one CPU, uses a RAM-disk root, and leaves display, input, USB
+and UFS disabled pending board measurements. The [port plan](docs/sunfish.md)
+lists the confirmed values, open TODOs, commands and hardware checkpoints.
+No Sunfish image has been booted on hardware.

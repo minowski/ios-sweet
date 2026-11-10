@@ -431,3 +431,20 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
      cpu_init, before arm_vm_init.
   5. panic hook at top of panic_trap_to_debugger: va_copy + _doprnt(fmt, &copy, sweet_early_putc, 16).
   Verify with tools/xnu-cc.py (compile+symbols) and patch-order simulation before the single CI run.
+## Sunfish handoff (2026-11-10)
+
+- Local branch `sunfish-port`, based on `45263be`. `60e2473` records board
+  findings, `0fac919` adds the machine target, `3825aac` adds the ADT profile,
+  `c976fe2` adds the boot wrapper and shim checks, and `ac78f4e` fixes a
+  patch boundary caught during host verification.
+- Seeded Sweet ADTs matched the original output byte for byte in default,
+  high-memory and QEMU profiles with the Apple product reader stubbed.
+  The Sunfish ADT and Android v2 header reader passed synthetic-input
+  checks, and the shim script passed Bash syntax checking.
+- Ordered patch checks covered selected XNU files. The Windows fixture
+  needed patch CRLF normalization and byte-preserving reads. The input
+  patch sequence applied after the patch boundary fix. There is no Sunfish
+  kernel CI run, compiled shim, boot image or hardware result.
+- Next concrete step is to confirm the stock Sunfish boot header and
+  carve-out-free RAM window, obtain a SUNFISH kernel build and establish
+  a safe console path. See [the port plan](docs/sunfish.md).

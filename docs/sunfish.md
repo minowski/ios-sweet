@@ -21,3 +21,66 @@ the corresponding path.
 Sources: [Sunfish DTS family](https://github.com/GrapheneOS-Archive/kernel_msm-coral/tree/13/arch/arm64/boot/dts/google),
 [LineageOS Sunfish specs](https://github.com/LineageOS/lineage_wiki/blob/main/_data/devices/sunfish.yml).
 
+### Build and temporary boot
+
+Use Linux with the Sweet shim dependencies (AArch64 GCC/binutils,
+GNU awk, AOSP `mkbootimg`) and an approved `SUNFISH` kernel artifact.
+Supply the official stock boot image for the installed Sunfish firmware,
+a confirmed 32 MiB-aligned RAM base and 16 KiB-aligned RAM size, and a
+small HFS+ test root image with a userspace entry point. The RAM size
+includes the top 1 MiB reserved by `mkadt.py` for panic data. The shim
+checks payload extents and overlaps with the loaded shim and initrd, but
+cannot establish that a proposed address is safe against firmware or XPU
+reservations.
+
+If you want to run kernel CI, publish the feature branch and dispatch the
+workflow on that ref yourself after reviewing the changes.
+
+```sh
+git push -u origin sunfish-port
+gh workflow run xnu.yml -R minowski/ios-sweet --ref sunfish-port -f machine_config=SUNFISH
+# Once the run finishes, use its ID.
+gh run download "$RUN_ID" -R minowski/ios-sweet -n xnu-kernel -D "$BUILD_DIR/xnu"
+```
+
+Set `BUILD_DIR` to an absolute directory outside the checkout and set
+`STOCK_BOOT`, `TEST_ROOT`, `RAM_BASE` and `RAM_SIZE` to the confirmed
+inputs described above. Run from the checkout root.
+
+```sh
+mkdir -p "$BUILD_DIR"
+python3 tools/mkadt.py "$BUILD_DIR/sunfish.adt" --target sunfish \
+    --ram-base "$RAM_BASE" --ram-size "$RAM_SIZE"
+python3 tools/mkpayload.py "$BUILD_DIR/xnu/kernel.development.sunfish" \
+    "$BUILD_DIR/sunfish.adt" "$BUILD_DIR/payload.bin" --ramdisk "$TEST_ROOT" \
+    --cmdline 'debug=0xc serial=0 cpus=1 keepsyms=1 -enable_kprintf_spam rd=md0 sweettouch=0 sweetkeys=0 sweetbattery=0 sweetusb=0 sweetlog=0'
+bash shim/build.sh --sunfish "$BUILD_DIR/payload.bin" "$STOCK_BOOT" "$BUILD_DIR/shim"
+```
+
+The boot wrapper expects stock v2 with an embedded DTB and will reject
+other layouts. It reuses the stock page size, load addresses and version.
+ABL acceptance, image download limits, DTB/DTBO selection, initrd
+placement and EL1 entry remain hardware checks.
+
+On the unlocked Pixel 4a in bootloader mode, verify the product before
+sending the image. This is a temporary boot with no partition flashing.
+
+```sh
+fastboot getvar product           # expect sunfish
+fastboot boot "$BUILD_DIR/shim/sunfish-boot.img" 2>&1 | tee "$BUILD_DIR/fastboot.log"
+```
+
+Read the host-side bootloader transcript with
+`cat "$BUILD_DIR/fastboot.log"`. `OKAY` confirms the bootloader command,
+not XNU entry. The initial profile has no kernel log transport. The Sweet
+recovery script expects a ring at the end of `userdata` and is inapplicable.
+First establish a verified splash or debug transport. Then check shim
+entry, XNU handoff, timer interrupts, RAM-disk root mount, and userspace in
+that order. Before enabling OLED output, check the panel actually
+selected by the device's DTBO and whether ABL scanout displays successive
+buffer writes without a DSI kickoff. The source family contains both
+command and video panel definitions.
+
+Leave UFS and writes disabled until the LUN, GPT layout and root strategy
+have been verified. The RAM-disk build uses no Sunfish-specific root tweaks.
+
