@@ -20,7 +20,7 @@
  
  #define REG_CAP         0x00
  #define REG_IS          0x20
-@@ -599,6 +601,9 @@
+@@ -599,7 +601,10 @@
  	    su.writable ? "read-write" : "read-only", su.dma_pa);
  	sweet_log_start();
  	sweet_sample_start();
@@ -32,7 +32,7 @@
  
 --- /dev/null
 +++ b/bsd/dev/sweet_keys.c
-@@ -0,0 +1,182 @@
+@@ -0,1 +1,187 @@
 +/*
 + * Minimal polled SWEET keys. Call once after the scheduler is running.
 + * See hw-report.md: volume-up is PM6150L SID 4, NOT PM6150 SID 0.
@@ -160,6 +160,10 @@
 +void
 +sweet_keys_init(void)
 +{
++#if defined(ARM64_BOARD_CONFIG_SUNFISH)
++	/* TODO(sunfish): verify the PON and SPMI routing before polling. */
++	return;
++#endif
 +	int enabled = 1;
 +	thread_t thread;
 +	if (keys_started) {
@@ -217,7 +221,7 @@
 +#endif /* ARM64_BOARD_CONFIG_SWEET */
 --- /dev/null
 +++ b/bsd/dev/sweet_touch.c
-@@ -0,0 +1,568 @@
+@@ -0,0 +1,572 @@
 +/*
 + * SWEET SE7 FIFO I2C / GT9896 Yellowstone / Focaltech 54:52 bring-up.
 + * Call once after the scheduler is running; all work runs on one thread.
@@ -766,6 +770,10 @@
 +void
 +sweet_touch_init(void)
 +{
++#if defined(ARM64_BOARD_CONFIG_SUNFISH)
++	/* TODO(sunfish): ST FTS on SE7 (0x49), with board-specific power. */
++	return;
++#endif
 +	int enabled = 1;
 +	thread_t thread;
 +	if (st.started) {

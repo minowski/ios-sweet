@@ -118,3 +118,10 @@ index 0000000..6c63bbd
 +
 +options   CONFIG_RESLIDE_SHARED_CACHE		# <reslide_shared_cache>
 +options   CONFIG_KERNEL_TBI		# <kernel_tbi>
+diff --git a/config/MASTER.arm64.sunfish b/config/MASTER.arm64.sunfish
+new file mode 120000
+--- /dev/null
++++ b/config/MASTER.arm64.sunfish
+@@ -0,0 +1 @@
++MASTER.arm64.sweet
+\ No newline at end of file
