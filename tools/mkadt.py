@@ -4,7 +4,7 @@
 Only what the early boot path actually reads (see NOTES.md); every MMIO
 address comes from the sweet live FDT. Usage:  mkadt.py OUT.adt [--dump] [--qemu] [--highmem]
 """
-import hashlib, os, struct, sys
+import argparse, hashlib, os, struct, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import adt  # noqa: E402
@@ -31,6 +31,8 @@ GICR, GICR_SIZE = 0x17a60000, 0x100000
 FB, FB_SIZE = 0x9c000000, 0x1700000
 SWEET_ECID = 0x5357454554000001  # 'SWEET' + 1, synthetic
 FB_W, FB_H, FB_STRIDE = 1080, 2400, 1080 * 4
+SUNFISH_PANEL_SIZE = (1080, 2340)
+SUNFISH_ECID = 0x53554e4649534801  # synthetic, not a device identifier
 # Internal UFS host (ufshc@1d84000 "ufs_mem"); QEMU virt has none
 UFS, UFS_SIZE = 0x01d84000, 0x3000
 TIMEBASE = 19200000
@@ -74,9 +76,20 @@ def node(name, props=(), children=()):
     return n
 
 
-def build(seed=None, qemu=False, highmem=False):
+def build(seed=None, qemu=False, highmem=False, *, target="sweet", ram=None):
     """qemu=True: same tree, but with QEMU virt's GIC addresses and CNTFRQ (tools/qemu-sweet.py)."""
     phys_base, mem_size = (HIGH_PHYS_BASE, HIGH_MEM_SIZE) if highmem else (PHYS_BASE, MEM_SIZE)
+    sunfish = target == 'sunfish'
+    board = 'google,sunfish' if sunfish else 'xiaomi,sweet'
+    firmware = target + '-shim'
+    ecid = SUNFISH_ECID if sunfish else SWEET_ECID
+    if sunfish:
+        if qemu or highmem or ram is None:
+            raise ValueError('sunfish requires an explicit --ram-base and --ram-size; no --qemu or --highmem')
+        phys_base, mem_size = ram
+        if not (0 < phys_base < (1 << 40) and PANIC_LOG_SIZE < mem_size <= (1 << 40) - phys_base
+                and not phys_base % 0x2000000 and not mem_size % 0x4000):
+            raise ValueError('sunfish RAM must be positive, 32 MiB base / 16 KiB size aligned, within 40-bit PA')
     # Carve the panic log off the top so the kernel never allocates over it.
     panic_base = phys_base + mem_size - PANIC_LOG_SIZE
     mem_size -= PANIC_LOG_SIZE
@@ -92,12 +105,12 @@ def build(seed=None, qemu=False, highmem=False):
         ('random-seed', seed),
         ('debug-enabled', u32(1)),
         ('embedded-panic-log-size', u32(PANIC_LOG_SIZE)),
-        ('firmware-version', cstr('sweet-shim')),
-        ('system-firmware-version', cstr('sweet-shim')),
+        ('firmware-version', cstr(firmware)),
+        ('system-firmware-version', cstr(firmware)),
         # iBoot's SHA-384 of the boot manifest; /sbin/mount -P 1 exits unless
         # it exists (bind mounts /private/preboot/<hex>/usr/standalone/firmware,
         # tolerating a missing directory). Fixed stand-in value.
-        ('boot-manifest-hash', BOOT_MANIFEST_HASH),
+        ('boot-manifest-hash', hashlib.sha384(b'sunfish boot manifest').digest() if sunfish else BOOT_MANIFEST_HASH),
         # libimg4 (cryptexd) aborts "failed to get crypto algorithm" without
         # it; real A11+ device trees say sha2-384.
         ('crypto-hash-method', cstr('sha2-384')),
@@ -111,7 +124,7 @@ def build(seed=None, qemu=False, highmem=False):
         # files), so e.g. DataMigration never records LastSystemVersion and
         # migrates on every boot. Synthetic ECID (not the phone's); chip-id
         # of the A11 that the iPhone X userland expects.
-        ('unique-chip-id', struct.pack('<Q', SWEET_ECID)),
+        ('unique-chip-id', u64(ecid)),
         ('chip-id', u32(0x8015)),
         # Security status as on a dev-fused, undemoted board (tuple 0,0,1,1):
         # MobileGestalt reads these from /chosen, and mobileactivationd's
@@ -134,7 +147,7 @@ def build(seed=None, qemu=False, highmem=False):
     # and uses cpus=N to select an initial prefix (N <= 8).
     # QEMU retains its original single-CPU tree: its MPIDRs differ from sweet.
     cpu_nodes = []
-    for core in range(1 if qemu else 8):
+    for core in range(1 if qemu or sunfish else 8):
         cpu_nodes.append(node(f'cpu{core}', [
             ph(),
             ('device_type', cstr('cpu')),
@@ -149,9 +162,11 @@ def build(seed=None, qemu=False, highmem=False):
             ('l3-cache-id', u32(0)),     # shared L3
             ('state', cstr('running' if core == 0 else 'stopped')),
             ('timebase-frequency', u32(timebase)),
+        ] + ([] if sunfish else [
             ('clock-frequency', u32(2304000000 if core >= 6 else 1804800000)),
             ('bus-frequency', u32(100000000)),
             ('memory-frequency', u32(1866000000)),
+        ]) + [
             ('peripheral-frequency', u32(timebase)),
             ('fixed-frequency', u32(timebase)),
         ]))
@@ -176,7 +191,7 @@ def build(seed=None, qemu=False, highmem=False):
         # No hardware: watchdogd checks IODeviceTree:/arm-io/wdt for no-pmu and
         # otherwise crashes trying to set the PMU boot stage (customer builds
         # ignore the -wdt_no_pmu boot-arg).
-        node('wdt', [ph(), ('no-pmu', u32(1))]),
+        node('wdt', [ph(), ('no-pmu', u32(1))])] + ([] if sunfish else [
         # Main display: IOMobileFramebuffer.framework counts /arm-io children
         # with this device_type and reads the canvas size from the node
         # (the presented iPhone X size, see SweetFramebuffer.cpp);
@@ -187,7 +202,7 @@ def build(seed=None, qemu=False, highmem=False):
             ('compatible', cstr('sweet,display')),
             ('canvas-width', u32(1125)),
             ('canvas-height', u32(2436)),
-        ])])
+        ])]))
 
     fbcon = node('sweet-fbcon', [
         ph(),
@@ -197,6 +212,8 @@ def build(seed=None, qemu=False, highmem=False):
         ('stride', u32(FB_STRIDE)),
     ])
 
+    # TODO(sunfish): add a framebuffer node only after verifying the active
+    # splash address, stride, format and panel refresh requirements.
     # bsd/dev/sweet_ufs.c: the UFS host ABL leaves running (absolute physical reg).
     ufs = node('sweet-ufs', [
         ph(),
@@ -219,7 +236,7 @@ def build(seed=None, qemu=False, highmem=False):
         ('opposed-power-vol-buttons', u32(1)),
     ])
 
-    product_props = d22ap_product()
+    product_props = None if sunfish else d22ap_product()
     product = [node('product', [ph()] + product_props)] if product_props else []
 
     # Panic log region. /pram reg = <phys size>; it sits just above the
@@ -231,20 +248,38 @@ def build(seed=None, qemu=False, highmem=False):
     # (iPhone10,3). 'xiaomi,sweet' stays for SweetPlatformExpert matching.
     return node('device-tree', [
         ph(),
-        ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr('xiaomi,sweet') + cstr('qcom,sm7150') + cstr('AppleARM')),
+        ('compatible', cstr('D22AP') + cstr('iPhone10,3') + cstr(board) + cstr('qcom,sm7150') + cstr('AppleARM')),
         ('model', cstr('iPhone10,3')),
         ('target-type', cstr('D22')),
         ('target-sub-type', cstr('D22AP')),
         ('manufacturer', cstr('Apple Inc.')),
         ('#address-cells', u32(2)),
         ('#size-cells', u32(2)),
-    ], [chosen, defaults, cpus, arm_io, fbcon, buttons, pram] + product + ([] if qemu else [ufs]))
+    ], [chosen, defaults, cpus, arm_io, buttons, pram] if sunfish else
+        [chosen, defaults, cpus, arm_io, fbcon, buttons, pram] + product + ([] if qemu else [ufs]))
 
 
 if __name__ == '__main__':
-    root = build(qemu='--qemu' in sys.argv, highmem='--highmem' in sys.argv)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('out')
+    ap.add_argument('--target', choices=('sweet', 'sunfish'), default='sweet')
+    ap.add_argument('--dump', action='store_true')
+    ap.add_argument('--qemu', action='store_true')
+    ap.add_argument('--highmem', action='store_true')
+    ap.add_argument('--ram-base', type=lambda value: int(value, 0))
+    ap.add_argument('--ram-size', type=lambda value: int(value, 0))
+    args = ap.parse_args()
+    ram = None
+    if args.ram_base is not None or args.ram_size is not None:
+        if args.target != 'sunfish' or None in (args.ram_base, args.ram_size):
+            ap.error('use both --ram-base and --ram-size with --target sunfish')
+        ram = (args.ram_base, args.ram_size)
+    try:
+        root = build(qemu=args.qemu, highmem=args.highmem, target=args.target, ram=ram)
+    except ValueError as error:
+        ap.error(str(error))
     blob = adt.serialize(root)
-    open(sys.argv[1], 'wb').write(blob)
-    if '--dump' in sys.argv:
+    open(args.out, 'wb').write(blob)
+    if args.dump:
         adt.dump(adt.parse(blob)[0])
-    print(f'{sys.argv[1]}: {len(blob)} bytes', file=sys.stderr)
+    print(f'{args.out}: {len(blob)} bytes', file=sys.stderr)
