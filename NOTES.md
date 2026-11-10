@@ -448,3 +448,20 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
 - Next concrete step is to confirm the stock Sunfish boot header and
   carve-out-free RAM window, obtain a SUNFISH kernel build and establish
   a safe console path. See [the port plan](docs/sunfish.md).
+
+### Sunfish CI and offline assembly follow-up
+
+- CI run 42889077755 was cancelled before its first step after GitHub
+  retired macos-14. Commit 1b09314 switches to macos-15-intel. Run
+  42889406136 passed setup and dependencies and entered Build. The
+  newer iig ABI has not been validated against XNU 8796.
+- The supplied Evolution X Android 16 OTA identifies itself with a
+  stock Android 13 fingerprint. Its extracted boot partition matched
+  the OTA manifest SHA-256. The separately supplied boot image has the
+  same kernel, ramdisk, DTB and v2 layout.
+- The ARM64 shim was compiled and linked offline with Zig. An ADT for
+  the candidate 0xb4000000 + 0x10000000 RAM window and a packaging helper
+  are prepared outside the checkout. The Evolution X base DTB has no
+  static reserved-memory overlap, but its memory node is zero-filled.
+  The candidate window and the console transport still need hardware
+  validation before booting. No device boot or flash was attempted.
