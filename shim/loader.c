@@ -85,12 +85,49 @@ const char *loader_boot(uintptr_t dtb)
 		return "no initrd in /chosen";
 	con_hex2("INITRD", "lo=", rd_start, "hi=", rd_end);
 
+#ifdef SUNFISH
+	if ((rd_start & 7) || rd_end <= rd_start ||
+	    rd_end - rd_start < sizeof(struct payload))
+		return "bad initrd bounds";
+#endif
 	const struct payload *p = (const struct payload *)rd_start;
 	if (!magic_ok(p->magic))
 		return "no SWEETXNU payload";
 	if (p->version != 1 || (p->adt_off & 7) || (rd_start & 7))
 		return "bad payload header";
 
+#ifdef SUNFISH
+	/* The supplied window must exclude all firmware and XPU reservations. */
+	extern const char _head[], _end[];
+	uint64_t ram_end = p->phys_base + p->mem_size;
+	uint64_t rd_size = rd_end - rd_start;
+	if (!p->phys_base || ram_end <= p->phys_base || ram_end > (1ULL << 40) ||
+	    (p->phys_base & 0x1ffffff) || (p->mem_size & (PAGE_16K - 1)) ||
+	    ((uintptr_t)_head < ram_end && (uintptr_t)_end > p->phys_base) ||
+	    (dtb >= p->phys_base && dtb < ram_end))
+		return "bad or occupied kernel RAM window";
+	if (!p->nsegs || p->nsegs > (rd_size - sizeof(*p)) / sizeof(p->segs[0]) ||
+	    p->adt_off > rd_size || p->adt_size > rd_size - p->adt_off ||
+	    (p->adt_size & 7 && rd_size - p->adt_off - p->adt_size < 7))
+		return "bad payload extent";
+	if (p->kernel_end < p->virt_base || p->kernel_end - p->virt_base > p->mem_size ||
+	    p->adt_size > p->mem_size - (p->kernel_end - p->virt_base) ||
+	    p->mem_size - (p->kernel_end - p->virt_base) - p->adt_size < 2 * PAGE_16K ||
+	    p->entry_va < p->virt_base || p->entry_va >= p->kernel_end)
+		return "kernel or boot arguments do not fit";
+	for (uint32_t i = 0; i < p->nsegs; i++) {
+		const struct payload_seg *seg = &p->segs[i];
+		if (seg->vmaddr < p->virt_base || seg->vmaddr > p->kernel_end ||
+		    seg->vmsize > p->kernel_end - seg->vmaddr ||
+		    seg->file_size > seg->vmsize || seg->file_off > rd_size ||
+		    seg->file_size > rd_size - seg->file_off ||
+		    ((seg->vmaddr | seg->file_off) & 7) ||
+		    (seg->file_size & 7 &&
+		     (seg->vmsize - seg->file_size < 7 ||
+		      rd_size - seg->file_off - seg->file_size < 7)))
+			return "bad kernel segment extent";
+	}
+#endif
 	uint64_t pa_of_va_base = p->phys_base - p->virt_base;	/* pa = va + this */
 	con_hex2("PHYS", "base=", p->phys_base, "size=", p->mem_size);
 	con_hex("VIRT", p->virt_base);
@@ -123,12 +160,14 @@ const char *loader_boot(uintptr_t dtb)
 	ba->physBase = p->phys_base;
 	ba->memSize = p->mem_size;
 	ba->topOfKernelData = top;
+#ifndef SUNFISH
 	ba->Video.v_baseAddr = FB_BASE;
 	ba->Video.v_display = 1;
 	ba->Video.v_rowBytes = FB_STRIDE;
 	ba->Video.v_width = FB_W;
 	ba->Video.v_height = FB_H;
 	ba->Video.v_depth = 32;
+#endif
 	ba->deviceTreeP = adt_pa - pa_of_va_base;	/* xnu reads it with the MMU on: a VA */
 	ba->deviceTreeLength = (uint32_t)p->adt_size;
 	for (int i = 0; i < BOOT_LINE_LENGTH; i++)

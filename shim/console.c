@@ -17,6 +17,8 @@ static int row;
 
 void con_clear(uint32_t bg)
 {
+	if (!con_fb)
+		return;
 	for (int y = 0; y < FB_H; y++) {
 		volatile uint32_t *line = con_fb + y * (FB_STRIDE / 4);
 		for (int x = 0; x < FB_W; x++)
@@ -28,6 +30,8 @@ void con_clear(uint32_t bg)
 
 static void put_char(int col, char ch, uint32_t fg)
 {
+	if (!con_fb)
+		return;
 	if (ch < 0x20 || ch > 0x7e)
 		ch = '?';
 	const unsigned char *g = font8x16[ch - 0x20];
